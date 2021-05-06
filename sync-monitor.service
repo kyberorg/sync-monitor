@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync Monitor and Metrics
+Wants=network-online.target
+After=network-online.target nss-lookup.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5s
+ExecStart=/usr/local/bin/sync-monitor --file /path/to/repo/lastsync --port 1221 --interval 2m
+
+[Install]
+WantedBy=multi-user.target
