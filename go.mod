@@ -1,4 +1,4 @@
-module sync-monitor
+module github.com/kyberorg/sync-monitor
 
 go 1.14
 

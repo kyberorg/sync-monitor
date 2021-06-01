@@ -49,3 +49,18 @@ make binary
 ```shell
  CGO_ENABLED=0 go build github.com/kyberorg/sync-monitor/cmd/sync-monitor
 ```
+
+## About: State monitoring
+Application can monitor Manjaro's `state` files. 
+It reads timestamp from repo's `state` file and calculates delta (seconds between now and timestamp).
+
+### Usage
+```shell
+/usr/local/bin/sync-monitor
+--manjaro.repo.path=/path/to/repo
+--manjaro.repo.list=testing,stable,unstable
+(other params are omiited)
+```
+
+
+
