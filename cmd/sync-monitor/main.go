@@ -3,10 +3,12 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"github.com/kyberorg/sync-monitor/cmd/sync-monitor/config"
+	"github.com/kyberorg/sync-monitor/cmd/sync-monitor/constants"
+	"github.com/kyberorg/sync-monitor/cmd/sync-monitor/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"gopkg.in/alecthomas/kingpin.v2"
 	"io"
 	"log"
 	"net/http"
@@ -18,46 +20,37 @@ import (
 	"time"
 )
 
-const wrongTimeStamp = -1
-const defaultInterval = 5 * time.Minute
-
 var (
-	lastsyncFile = kingpin.Flag("file", "Path to lastsync file").Required().ExistingFile()
-	metricsPort  = kingpin.Flag("port", "Port to run metrics at").Uint16()
-	interval     = kingpin.Flag("interval", "Time between checks").Duration()
-)
-
-var (
-	noMetrics bool
-	metric    = promauto.NewGauge(prometheus.GaugeOpts{
+	metric = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "repo_sync_seconds",
 		Help: "Second after last sync",
 	})
 )
 
 func main() {
-	kingpin.Parse()
-	noMetrics = *metricsPort == 0
 	go checkSyncDelta()
+	if config.ShouldRunStateChecker() {
+		go state.GetChecker().RunChecks()
+	}
 
-	if noMetrics {
+	if config.GetAppConfig().NoMetrics {
 		fmt.Printf("Press Ctrl+C to end\n")
 		waitForCtrlC()
 		fmt.Printf("\n")
 	} else {
-		portString := strconv.Itoa(int(*metricsPort))
+		portString := strconv.Itoa(int(config.GetAppConfig().MetricsPort))
+		http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+			serveMainPage(writer)
+		})
 		http.Handle("/metrics", promhttp.Handler())
-		log.Printf("FTP Monitor metrics server listening at port :%s.", portString)
+		log.Printf("Sync Monitor metrics server listening at port :%s.", portString)
 		err := http.ListenAndServe(":"+portString, nil)
 		log.Fatal(err)
 	}
 }
 
 func checkSyncDelta() {
-	if interval == nil || *interval == 0 {
-		*interval = defaultInterval
-	}
-	log.Println("Interval is", *interval)
+	log.Println("Interval is", config.GetAppConfig().Interval)
 	var delta int64
 	var err error
 	for {
@@ -66,12 +59,12 @@ func checkSyncDelta() {
 			log.Printf(err.Error())
 			delta = -1
 		}
-		if noMetrics {
+		if config.GetAppConfig().NoMetrics {
 			log.Printf("Last sync was %d seconds ago", delta)
 		} else {
 			metric.Set(float64(delta))
 		}
-		time.Sleep(*interval)
+		time.Sleep(config.GetAppConfig().Interval)
 	}
 }
 
@@ -79,22 +72,22 @@ func readSyncDelta() (int64, error) {
 	//read
 	line, fileReadError := readSyncTimestamp()
 	if fileReadError != nil {
-		return wrongTimeStamp, fileReadError
+		return constants.WrongTimeStamp, fileReadError
 	}
 
 	//convert to ts
 	timeStampAsInt, convertErr := strconv.ParseInt(line, 10, 0)
 	if convertErr != nil {
-		return wrongTimeStamp, convertErr
+		return constants.WrongTimeStamp, convertErr
 	}
 	return time.Now().Unix() - timeStampAsInt, nil
 }
 
 func readSyncTimestamp() (string, error) {
 	//read file
-	lastSyncFileContent, fileReadErr := os.Open(*lastsyncFile)
+	lastSyncFileContent, fileReadErr := os.Open(config.GetAppConfig().LastsyncFile)
 	if fileReadErr != nil {
-		return "", fileReadErr
+		return constants.EmptyString, fileReadErr
 	}
 	defer lastSyncFileContent.Close()
 	reader := bufio.NewReader(lastSyncFileContent)
@@ -103,7 +96,7 @@ func readSyncTimestamp() (string, error) {
 	//reading first line
 	line, fileReadErr = reader.ReadString('\n')
 	if fileReadErr != nil && fileReadErr != io.EOF {
-		return "", fileReadErr
+		return constants.EmptyString, fileReadErr
 	}
 	line = strings.TrimSuffix(line, "\n")
 	return line, nil
@@ -120,4 +113,17 @@ func waitForCtrlC() {
 		endWaiter.Done()
 	}()
 	endWaiter.Wait()
+}
+
+func serveMainPage(w http.ResponseWriter) {
+	_, err := w.Write([]byte(`<html>
+			<head><title>Sync Monitor</title></head>
+			<body>
+			<h1>Sync Monitor Metrics Server</h1>
+			<p><a href="/metrics">Metrics</a></p>
+			</body>
+			</html>`))
+	if err != nil {
+		log.Fatalln("Failed to server main page")
+	}
 }
